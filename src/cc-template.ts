@@ -818,7 +818,14 @@ export function detectNonCCByTools(
     // verbatim rather than falling back to the full CC template.
     // Union set, not the host-filtered one: a win32 client's PowerShell is
     // native regardless of the platform dario itself runs on (v4.8.136).
-    if (CC_NATIVE_NAMES_UNION.has(rawName)) { native = true; continue; }
+    // A bundled name whose definition cannot be advertised (advisor, captured
+    // with an empty schema) is not evidence of Claude Code: a client can declare
+    // its own tool of that name, and counting it as native flips a foreign client
+    // to the remap path.
+    if (CC_NATIVE_NAMES_UNION.has(rawName)) {
+      if (!CC_TOOL_DEFINITIONS_UNADVERTISABLE.has(rawName)) native = true;
+      continue;
+    }
     if (CC_TOOL_NAMES_LOWER.has(rawName.toLowerCase())) sharesCCName = true;
     if (!TOOL_MAP[rawName.toLowerCase()] && !isMcpToolName(rawName)) unmapped++;
   }
@@ -2379,10 +2386,16 @@ export function buildCCRequest(
       const clientOwnNative = clientTools.filter((t) =>
         typeof t.name === 'string' && CC_TOOL_DEFINITIONS_UNADVERTISABLE.has(t.name) && isAdvertisableToolDefinition(t),
       );
+      // Anthropic's server-side advisor tool (advisor_YYYYMMDD) has a fixed name
+      // and no input_schema, so it cannot be carried MCP-shaped. The API runs
+      // it, so it goes out verbatim after the client's own tools.
+      const clientServerAdvisor = clientTools.filter((t) =>
+        typeof (t as { type?: unknown }).type === 'string' && /^advisor_\d+$/.test((t as { type: string }).type),
+      );
       // Client tools outside CC's set follow the MCP tools, under the
       // MCP-shaped names the tool map gave them.
-      ccRequest.tools = availableCC.length > 0 || mcpTools.length > 0 || clientOwnNative.length > 0 || mcpShapedTools.length > 0
-        ? dedupeToolsByName([...availableCC, ...clientOwnNative, ...mcpTools, ...mcpShapedTools])
+      ccRequest.tools = availableCC.length > 0 || mcpTools.length > 0 || clientOwnNative.length > 0 || mcpShapedTools.length > 0 || clientServerAdvisor.length > 0
+        ? dedupeToolsByName([...availableCC, ...clientOwnNative, ...mcpTools, ...mcpShapedTools, ...clientServerAdvisor])
         : CC_TOOL_DEFINITIONS;
     }
   } else if (effectiveMergeTools) {
